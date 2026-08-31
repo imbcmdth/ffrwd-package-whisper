@@ -1,0 +1,15 @@
+[workspace]
+# The wasm module this package ships. It builds into
+# target/wasm32-wasip2/release/, which is where the package's lib SQL names
+# it. `core` is the arithmetic the module is built on; it ships nothing of
+# its own, and it is where the host-side tests live.
+members = [
+    "core",
+    "transcribe",
+]
+resolver = "2"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true

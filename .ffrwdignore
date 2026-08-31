@@ -1,0 +1,14 @@
+# Build output, including whatever `cargo test` leaves behind. The one file
+# the lib SQL names is pulled back in by the manifest's closure; the rest of
+# the directory stays out of the archive.
+target/
+
+# The wit the build.rs copies in, which is the sidecar's own.
+wit/
+
+# The model, which the manifest pins and `ffrwd install` fetches. It is never
+# package content.
+*.onnx
+
+# Local development state, not package content.
+ffrwd.lock

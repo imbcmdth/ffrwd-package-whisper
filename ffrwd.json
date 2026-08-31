@@ -1,0 +1,40 @@
+{
+  "name": "ffrwd/whisper",
+  "version": "0.1.0",
+  "description": "Speech into the pipeline: whisper transcribes or translates an audio stream, the audio passes through untouched, and every stretch of speech leaves as a cue with the words in it.",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/imbcmdth/ffrwd-package-whisper",
+  "capabilities": [
+    "nn"
+  ],
+  "dependencies": {
+    "ffrwd/wasm": "0.11.0",
+    "ffrwd/vad": "0.1.0"
+  },
+  "keywords": [
+    "whisper",
+    "transcribe",
+    "translate",
+    "speech",
+    "subtitles",
+    "captions",
+    "cues",
+    "language",
+    "nn"
+  ],
+  "lib": {
+    "transcribe": "src/transcribe.sql"
+  },
+  "bin": {
+    "subtitles": "recipes/subtitles.sql",
+    "transcript": "recipes/transcript.sql"
+  },
+  "models": {
+    "transcribe": {
+      "repo": "imbcmdth/whisper-medium-onnx",
+      "revision": "707126091cb56df398242447b8b0ecc94b3ef862",
+      "file": "whisper-medium_beamsearch.int8.onnx",
+      "sha256": "98fcf400f539cba4b702ed8bc2a3c91c23d89906e11df367e3cf6f02245ea1c2"
+    }
+  }
+}

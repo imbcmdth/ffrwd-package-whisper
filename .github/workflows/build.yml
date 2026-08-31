@@ -1,0 +1,32 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install ffrwd and the wit package
+        run: |
+          pip install ffrwd ffrwd-wasm
+          ffrwd install -g ffrwd/wasm
+      - name: Build the module
+        run: cargo build --target wasm32-wasip2 --release
+      - name: Describe the module
+        run: ffrwd-wasm --describe target/wasm32-wasip2/release/transcribe.wasm
+      - name: Unit tests
+        run: cargo test --release
+      - name: Formatting
+        run: cargo fmt --check
+      - name: Lints
+        run: cargo clippy --all-targets -- -D warnings
