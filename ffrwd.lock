@@ -1,9 +1,9 @@
 {
   "format_version": 3,
-  "reproducible": false,
-  "not_reproducible_because": "a package is linked to a working directory, so its files are not pinned here",
+  "reproducible": true,
   "dependencies": {
-    "ffrwd/wasm": "0.11.0"
+    "ffrwd/wasm": "0.11.0",
+    "ffrwd/vad": "0.1.0"
   },
   "packages": [
     {
@@ -14,8 +14,21 @@
       "store": "v1/25/255b3d66e8ac40f3bf86530b78ca7358d1732c33b54c2810b1bb375ab6b6d172"
     },
     {
-      "kind": "link",
-      "path": "../ffrwd-package-vad"
+      "kind": "registry",
+      "name": "ffrwd/wasm",
+      "version": "0.14.0",
+      "sha256": "4a638c3b7f5492add09467bb08ce3b48a6dfe65fed38966756e8579fb3419e9c",
+      "store": "v1/4a/4a638c3b7f5492add09467bb08ce3b48a6dfe65fed38966756e8579fb3419e9c"
+    },
+    {
+      "kind": "registry",
+      "name": "ffrwd/vad",
+      "version": "0.1.0",
+      "sha256": "165b5a6970e6612c3aaa614d3394a0d0ecf4e54b7460417207bc4ef27571192d",
+      "store": "v1/16/165b5a6970e6612c3aaa614d3394a0d0ecf4e54b7460417207bc4ef27571192d",
+      "dependencies": {
+        "ffrwd/wasm": "0.14.0"
+      }
     }
   ]
 }
