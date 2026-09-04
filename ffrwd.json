@@ -34,7 +34,8 @@
       "repo": "imbcmdth/whisper-medium-onnx",
       "revision": "707126091cb56df398242447b8b0ecc94b3ef862",
       "file": "whisper-medium_beamsearch.int8.onnx",
-      "sha256": "98fcf400f539cba4b702ed8bc2a3c91c23d89906e11df367e3cf6f02245ea1c2"
+      "sha256": "98fcf400f539cba4b702ed8bc2a3c91c23d89906e11df367e3cf6f02245ea1c2",
+      "not_on": ["directml"]
     }
   }
 }
