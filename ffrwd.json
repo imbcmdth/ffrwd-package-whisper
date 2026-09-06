@@ -1,7 +1,7 @@
 {
   "name": "ffrwd/whisper",
-  "version": "0.1.1",
-  "description": "Speech into the pipeline: whisper transcribes or translates an audio stream, the audio passes through untouched, and every stretch of speech leaves as a cue with the words in it.",
+  "version": "0.1.2",
+  "description": "Whisper transcribes or translates an audio stream into cues with the detected words in it.",
   "license": "Apache-2.0",
   "homepage": "https://github.com/imbcmdth/ffrwd-package-whisper",
   "capabilities": [
