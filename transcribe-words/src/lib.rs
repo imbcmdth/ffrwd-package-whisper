@@ -432,9 +432,7 @@ impl Guest for TranscribeWords {
 
     fn init(format: Format, stream_info: StreamInfo, params: String) -> Result<(), String> {
         let Format::Audio(audio) = format else {
-            return Err(format!(
-                "{ME} listens to samples, and this stream is video"
-            ));
+            return Err(format!("{ME} listens to samples, and this stream is video"));
         };
         if audio.sample_fmt != "f32" {
             return Err(format!(
@@ -884,9 +882,8 @@ mod tests {
         // actually does, and a change that starts costing a frame should have
         // to say so here.
         let f = fixture();
-        for (got, (text, start, end)) in align_fixture(&f, FirstRow::Duplicated)
-            .iter()
-            .zip(&f.words)
+        for (got, (text, start, end)) in
+            align_fixture(&f, FirstRow::Duplicated).iter().zip(&f.words)
         {
             assert!(
                 (got.start - start).abs() < 1e-9 && (got.end - end).abs() < 1e-9,

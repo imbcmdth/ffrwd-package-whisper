@@ -322,7 +322,12 @@ fn mean_over_heads(weights: &[f32], heads: usize, steps: usize, frames: usize) -
 /// token step only when it is strictly cheaper than both, and every tie goes
 /// to the frame step. That is what makes this trace the same trace, and not
 /// merely a trace of the same length.
-fn dtw(matrix: &[f32], tokens: usize, frames: usize, cost_of: impl Fn(f32) -> f64) -> Vec<(usize, usize)> {
+fn dtw(
+    matrix: &[f32],
+    tokens: usize,
+    frames: usize,
+    cost_of: impl Fn(f32) -> f64,
+) -> Vec<(usize, usize)> {
     const DIAGONAL: i8 = 0;
     const TOKEN_STEP: i8 = 1;
     const FRAME_STEP: i8 = 2;
@@ -440,9 +445,8 @@ fn words_of(vocab: &Vocab, run: &[u32]) -> Vec<Group> {
 
     let mut out: Vec<Group> = Vec::new();
     for (text, tokens) in pieces {
-        let opens_a_word = text.starts_with(' ')
-            || PUNCTUATION.contains(text.trim())
-            || out.is_empty();
+        let opens_a_word =
+            text.starts_with(' ') || PUNCTUATION.contains(text.trim()) || out.is_empty();
         if opens_a_word {
             out.push(Group {
                 text,
@@ -699,7 +703,10 @@ mod tests {
         let vocab = whisper();
         let split = groups(&vocab, &[848, 5186, 51064, 50257]);
         assert_eq!(split.len(), 4);
-        assert_eq!(texts(&split)[..2], [" said".to_string(), " yesterday".to_string()]);
+        assert_eq!(
+            texts(&split)[..2],
+            [" said".to_string(), " yesterday".to_string()]
+        );
         assert!(!split[0].special && !split[1].special);
         assert!(split[2].special && split[3].special, "a timestamp and EOT");
         assert_eq!(split[2].tokens, 1);
