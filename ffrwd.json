@@ -1,6 +1,6 @@
 {
   "name": "ffrwd/whisper",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Whisper transcribes or translates an audio stream into cues with the detected words in it.",
   "license": "Apache-2.0",
   "homepage": "https://github.com/imbcmdth/ffrwd-package-whisper",
@@ -20,10 +20,13 @@
     "captions",
     "cues",
     "language",
-    "nn"
+    "nn",
+    "words",
+    "timestamps"
   ],
   "lib": {
-    "transcribe": "src/transcribe.sql"
+    "transcribe": "src/transcribe.sql",
+    "transcribe_words": "src/transcribe_words.sql"
   },
   "bin": {
     "subtitles": "recipes/subtitles.sql",
@@ -35,7 +38,19 @@
       "revision": "707126091cb56df398242447b8b0ecc94b3ef862",
       "file": "whisper-medium_beamsearch.int8.onnx",
       "sha256": "98fcf400f539cba4b702ed8bc2a3c91c23d89906e11df367e3cf6f02245ea1c2",
-      "not_on": ["directml"]
+      "not_on": [
+        "directml"
+      ]
+    },
+    "transcribe_words": {
+      "repo": "imbcmdth/whisper-medium-onnx",
+      "revision": "f06d07854b2cfb7621d76fc1052f8f73e77f3703",
+      "file": "whisper-medium_beamsearch_cross_qk.int8.onnx",
+      "sha256": "9201eb032e93ac0875ba8d984c47282f18f021e7a31b21dcd40864d1548b2993",
+      "not_on": [
+        "coreml",
+        "directml"
+      ]
     }
   }
 }

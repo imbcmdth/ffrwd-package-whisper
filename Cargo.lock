@@ -204,6 +204,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "transcribe-words"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "whisper-core",
+ "wit-bindgen",
+]
+
+[[package]]
 name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -253,6 +263,7 @@ dependencies = [
 name = "whisper-core"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "serde_json",
 ]
 

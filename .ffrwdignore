@@ -12,3 +12,7 @@ wit/
 
 # Local development state, not package content.
 ffrwd.lock
+
+# The alignment fixture: one real window's collected cross-attention, which
+# `cargo test` needs and the shipped modules do not.
+transcribe-words/fixtures/

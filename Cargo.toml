@@ -1,11 +1,15 @@
 [workspace]
-# The wasm module this package ships. It builds into
+# The two wasm modules this package ships. They build into
 # target/wasm32-wasip2/release/, which is where the package's lib SQL names
-# it. `core` is the arithmetic the module is built on; it ships nothing of
-# its own, and it is where the host-side tests live.
+# them: `transcribe`, one cue per stretch of speech, and `transcribe-words`,
+# one cue per word. `core` is the arithmetic both are built on - the
+# spectrogram, the token ids, the parameters, the shape of a cue - and it
+# ships nothing of its own; it is also where the host-side tests for all of
+# that live.
 members = [
     "core",
     "transcribe",
+    "transcribe-words",
 ]
 resolver = "2"
 

@@ -53,18 +53,23 @@ use std::cell::RefCell;
 use exports::ffrwd::av::window_filter::{
     Format, FramePayload, Guest, InWindow, Meta, OutFrame, Processed, StreamInfo, WindowMeta,
 };
-use serde::{Deserialize, Serialize};
 use wasi::nn::graph::{load_by_name, Graph};
 use wasi::nn::inference::GraphExecutionContext;
 use wasi::nn::tensor::{Tensor, TensorType};
+use whisper_core::cue::{Cue, ROWS_SCHEMA};
 use whisper_core::mel::{
     self, Plan, N_FRAMES, N_MELS, SAMPLE_RATE, WINDOW_SAMPLES, WINDOW_SECONDS,
 };
-use whisper_core::tokens::{self, Segment, Task, Vocab};
+use whisper_core::params::{parse_params as parse_shared, Params, PARAMS_SCHEMA};
+use whisper_core::tensor::{f32_bytes, i32_bytes, to_i32};
+use whisper_core::tokens::{self, Segment, Vocab};
 use whisper_core::{seconds, Speech};
 
 /// The name the host binds the graph to. `-nn transcribe=<path>`.
 const MODEL: &str = "transcribe";
+
+/// What this export is called, which is what its refusals open on.
+const ME: &str = "transcribe";
 
 /// The graph's own names for the tensors it takes and returns.
 const FEATURES: &str = "input_features";
@@ -95,109 +100,16 @@ const DETECT_LENGTH: i32 = 4;
 /// Samples one call is handed.
 const WINDOW: u32 = WINDOW_SAMPLES as u32;
 
-const PARAMS_SCHEMA: &str = r#"{"type":"object","properties":{"language":{"type":["string","null"]},"task":{"type":"string","enum":["transcribe","translate"],"default":"transcribe"},"language_out":{"type":["string","null"]}},"additionalProperties":false}"#;
-const ROWS_SCHEMA: &str = r#"{"type":"object","properties":{"text":{"type":"string"},"start_t":{"type":"number"},"end_t":{"type":"number"}},"required":["text","start_t","end_t"],"additionalProperties":false}"#;
-
-fn default_task() -> String {
-    "transcribe".to_string()
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Written {
-    #[serde(default)]
-    language: Option<String>,
-    #[serde(default = "default_task")]
-    task: String,
-    #[serde(default)]
-    language_out: Option<String>,
-}
-
-impl Default for Written {
-    fn default() -> Written {
-        Written {
-            language: None,
-            task: default_task(),
-            language_out: None,
-        }
-    }
-}
-
-/// The parameters as the decode uses them.
-struct Params {
-    /// The forced language token, or None to detect one per window.
-    language: Option<u32>,
-    task: Task,
-}
-
-/// One segment, as the row it becomes. `start_t` and `end_t` are seconds from
-/// the start of the stream, not of the window.
-#[derive(Serialize)]
-struct Row {
-    text: String,
-    start_t: f64,
-    end_t: f64,
-}
-
-/// Parses and validates params, shared by `init` and `set_params`.
+/// Parses and validates params, shared by `init` and `set_params`. The list
+/// and the refusals are `transcribe_words`' too, so they live in `core`.
 fn parse_params(params: &str) -> Result<Params, String> {
-    let trimmed = params.trim();
-    let written: Written = if trimmed.is_empty() {
-        Written::default()
-    } else {
-        serde_json::from_str(trimmed).map_err(|e| format!("transcribe: bad params: {e}"))?
-    };
-
-    let task = Task::named(&written.task).ok_or_else(|| {
-        format!(
-            "transcribe: '{}' is no task; whisper does 'transcribe' or 'translate'",
-            written.task
-        )
-    })?;
-
-    let language = match written.language.as_deref() {
-        None => None,
-        Some(code) => Some(tokens::language_token(code).ok_or_else(|| {
-            format!("transcribe: whisper was not trained on the language '{code}'")
-        })?),
-    };
-
-    // `language_out` says what the CUES are in, which is what tags the track
-    // the rows mint. Translation always hands back English; transcription
-    // hands back what it heard, so naming a third thing there would tag the
-    // track with a language nothing in the query produces.
-    if let Some(out) = written.language_out.as_deref() {
-        if tokens::language_token(out).is_none() {
-            return Err(format!(
-                "transcribe: whisper was not trained on the language '{out}'"
-            ));
-        }
-        match task {
-            Task::Translate if out != "en" => {
-                return Err(format!(
-                    "transcribe: task 'translate' hands back English, and \
-                     language_out names '{out}'"
-                ));
-            }
-            Task::Transcribe => {
-                if let Some(heard) = written.language.as_deref() {
-                    if out != heard {
-                        return Err(format!(
-                            "transcribe: task 'transcribe' hands back what it heard, \
-                             and language is '{heard}' while language_out is '{out}'"
-                        ));
-                    }
-                }
-            }
-            Task::Translate => {}
-        }
-    }
-
-    Ok(Params { language, task })
+    parse_shared(ME, params)
 }
 
 /// The spec's spelling of an error code, so a message says what actually went
-/// wrong rather than how this module happens to format things.
+/// wrong rather than how this module happens to format things. The mapping is
+/// this crate's own because the enum is: each module's bindings mint a
+/// separate copy of `ErrorCode`.
 fn failed(what: &str, error: &wasi::nn::errors::Error) -> String {
     use wasi::nn::errors::ErrorCode;
     let code = match error.code() {
@@ -211,23 +123,7 @@ fn failed(what: &str, error: &wasi::nn::errors::Error) -> String {
         ErrorCode::Security => "security",
         ErrorCode::Unknown => "unknown",
     };
-    format!("transcribe: {what}: {code} ({})", error.data())
-}
-
-/// Floats as the little-endian bytes a tensor carries.
-fn f32_bytes(values: &[f32]) -> Vec<u8> {
-    values.iter().flat_map(|v| v.to_le_bytes()).collect()
-}
-
-/// Whole numbers as the little-endian bytes a tensor carries.
-fn i32_bytes(values: &[i32]) -> Vec<u8> {
-    values.iter().flat_map(|v| v.to_le_bytes()).collect()
-}
-
-/// A tensor's bytes back as the whole numbers they spell.
-fn to_i32(bytes: &[u8]) -> Vec<i32> {
-    let (words, _) = bytes.as_chunks::<4>();
-    words.iter().copied().map(i32::from_le_bytes).collect()
+    whisper_core::tensor::failed(ME, what, code, &error.data())
 }
 
 /// A scalar the beam search takes as a one-element tensor.
@@ -520,12 +416,12 @@ impl Guest for Transcribe {
 /// One segment as the NDJSON line it leaves as, its times moved onto the
 /// stream's own clock.
 fn row(segment: Segment, start: f64) -> String {
-    let cue = Row {
+    Cue {
         text: segment.text,
         start_t: start + segment.start,
         end_t: start + segment.end.min(mel::WINDOW_SECONDS),
-    };
-    serde_json::to_string(&cue).expect("row serializes")
+    }
+    .row()
 }
 
 export!(Transcribe);
@@ -533,6 +429,7 @@ export!(Transcribe);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use whisper_core::tokens::Task;
 
     #[test]
     fn no_params_at_all_are_the_defaults() {
@@ -626,8 +523,8 @@ mod tests {
     }
 
     #[test]
-    fn whole_numbers_survive_the_trip_through_a_tensors_bytes() {
-        let values = [0i32, -1, 50258, i32::MAX];
-        assert_eq!(to_i32(&i32_bytes(&values)), values);
+    fn a_refusal_still_opens_on_this_modules_own_name() {
+        let refused = parse_params(r#"{"task":"summarize"}"#).expect_err("no such task");
+        assert!(refused.starts_with("transcribe: "), "{refused}");
     }
 }

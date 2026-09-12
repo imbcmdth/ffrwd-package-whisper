@@ -192,6 +192,20 @@ impl Vocab {
         Ok(Vocab { pieces })
     }
 
+    /// The bytes one id stands for, empty for a special token and for an id
+    /// the vocabulary does not name.
+    ///
+    /// A word boundary is a property of the BYTES, not of the text: whisper
+    /// opens a new word on a piece that begins with a space, and a piece can
+    /// be half a character, so the alignment walks the pieces itself rather
+    /// than decoding a run and trying to cut the string back up.
+    pub fn piece(&self, id: u32) -> &[u8] {
+        self.pieces
+            .get(id as usize)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
     /// The text a run of ids spells. Special tokens carry no text and are
     /// passed over; bytes that do not spell valid UTF-8 - which is what half a
     /// character at the end of a run looks like - come back as the
@@ -414,6 +428,28 @@ mod tests {
     fn a_special_token_carries_no_text() {
         let vocab = letters();
         assert_eq!(vocab.decode(&[0, SOT, 1, EOT, 2]), "abc");
+    }
+
+    #[test]
+    fn a_piece_is_the_bytes_an_id_stands_for_and_a_special_stands_for_none() {
+        let vocab = letters();
+        assert_eq!(vocab.piece(0), b"a");
+        assert_eq!(vocab.piece(26), b" ");
+        assert!(vocab.piece(EOT).is_empty(), "end-of-text is not text");
+        assert!(vocab.piece(SOT).is_empty());
+        assert!(vocab.piece(TIMESTAMP).is_empty());
+        assert!(vocab.piece(u32::MAX).is_empty(), "and neither is nothing");
+    }
+
+    #[test]
+    fn whispers_own_pieces_carry_the_leading_space_that_opens_a_word() {
+        let vocab = Vocab::whisper().expect("the vocabulary parses");
+        // 848 is " said" and 5186 " yesterday": the ids the fixture window
+        // decoded, and the space is the whole of what makes them new words.
+        assert_eq!(vocab.piece(848), b" said");
+        assert_eq!(vocab.piece(5186), b" yesterday");
+        // 13 is a bare full stop, which opens a word of its own.
+        assert_eq!(vocab.piece(13), b".");
     }
 
     #[test]

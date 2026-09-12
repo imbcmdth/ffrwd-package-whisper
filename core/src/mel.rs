@@ -37,6 +37,17 @@ pub const WINDOW_SAMPLES: usize = N_FRAMES * HOP;
 /// Seconds one window covers.
 pub const WINDOW_SECONDS: f64 = WINDOW_SAMPLES as f64 / SAMPLE_RATE as f64;
 
+/// How many of a window's [`N_FRAMES`] columns are audio rather than padding.
+///
+/// [`Plan::spectrogram`] always returns the model's full 3000, zero-filling
+/// whatever the samples did not reach - the encoder needs its fixed input. A
+/// caller that has to know where the audio actually stopped, as the word
+/// alignment does, asks here: one frame per hop, and the last partial hop is
+/// not a frame.
+pub fn content_frames(samples: usize) -> usize {
+    (samples / HOP).min(N_FRAMES)
+}
+
 /// The mel filterbank, 80 by 201 f32 as whisper ships it.
 const FILTERS_BYTES: &[u8] = include_bytes!("../melfilters.bytes");
 

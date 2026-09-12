@@ -29,12 +29,49 @@ it per window.
 The weights are pinned in the manifest and land beside the module at
 install. The model does not run on DirectML so picks CUDA or the CPU by itself.
 
+## One cue per word
+
+`transcribe_words` takes the same arguments and returns the same shape,
+but each cue is a single word with the seconds it runs between. Use it
+when something downstream acts on the times, such as a mask that bleeps
+only the words it was given: a phrase cue can be thirty seconds long, so
+one word in it silences the half minute around it.
+
+```pgsql
+SELECT ffrwd.whisper.transcribe_words(ffrwd.vad.speech(a)).words
+FROM input('film.mkv') f, unnest(f.audio) a WHERE a.index = 1
+```
+
+The times are not the timestamps the model writes into its answer. They
+come from the decoder's cross-attention, warped against the encoder's
+20 ms frames, which is how each word gets an edge of its own. Two
+consequences:
+
+- **It needs CUDA.** Collecting the cross-attention is a GPU-only
+  decoder op, so the graph loads anywhere and runs only there.
+  `transcribe` is the export that runs anywhere.
+- **It decodes greedily.** onnxruntime does not re-order the collected
+  attention when a beam search swaps its hypotheses, so this export
+  uses one beam where `transcribe` uses five. The text can differ
+  slightly on the same audio. Read words from this one and prose from
+  the other.
+
+`speech` matters more here than it does for `transcribe`. The warp has
+to open on a window's first frame, so without spans a window's first
+word absorbs the silence ahead of it and can be reported seconds early.
+Given spans, its start is pulled onto the onset inside it.
+
+The two exports pin different files of the same model, so installing
+both downloads two gigabytes rather than one.
+
 ## Exports
 
 - `transcribe(a audio_stream, speech cue[] DEFAULT NULL, language text
   DEFAULT NULL, task text DEFAULT 'transcribe', language_out text
   DEFAULT NULL)` returns `STRUCT(a audio_stream, words cue[])`: the
-  audio as it came, and what was said.
+  audio as it came, and what was said, a cue per stretch of speech.
+- `transcribe_words(...)` takes the same arguments and returns the same
+  shape, a cue per word. CUDA only.
 
 ## Recipes
 
