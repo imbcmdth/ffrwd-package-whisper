@@ -47,10 +47,21 @@
 -- 'en' when translating, and otherwise the language that was heard. The list
 -- is `transcribe`'s, argument for argument, so a query can swap one export for
 -- the other without being rewritten.
+--
+-- `strip` is this export's own. The model attaches punctuation to the word it
+-- belongs to, the way openai-whisper does: a comma rides the word before it, an
+-- opening quote the word after, so a cue's text is `damn,` or `"damn`. With
+-- `strip` true the text is the bare word, punctuation taken off both ends and
+-- nothing inside it touched, and a word that was only punctuation - a dash on
+-- its own - leaves no cue. That is what a mask matching typed words against
+-- these cues wants. Off, which is the default, the text is what the model
+-- wrote. Arguments are positional, so it is written after the four before it:
+-- `transcribe_words(ffrwd.vad.speech(a), NULL, 'transcribe', NULL, true)`.
 CREATE FUNCTION transcribe_words(a audio_stream,
                                  speech cue[] DEFAULT NULL,
                                  language text DEFAULT NULL,
                                  task text DEFAULT 'transcribe',
-                                 language_out text DEFAULT NULL)
+                                 language_out text DEFAULT NULL,
+                                 strip boolean DEFAULT false)
 RETURNS STRUCT(a audio_stream, words cue[])
   AS 'target/wasm32-wasip2/release/transcribe_words.wasm', 'transcribe_words' LANGUAGE wasm;

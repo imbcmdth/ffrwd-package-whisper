@@ -132,10 +132,52 @@ const NEEDS_CUDA: &str = "word timestamps need the CUDA execution provider: the 
      exists only on the GPU, so this graph runs nowhere else. Use \
      `transcribe`, which is the export that runs anywhere.";
 
+/// This module's parameters: the three `transcribe` takes, and `strip`.
+#[derive(Debug)]
+struct WordParams {
+    /// The language, the task and what the cues come out in, as shared.
+    decode: Params,
+    /// Whether a word's cue carries the bare word. The model attaches
+    /// punctuation to words - a comma after `damn`, a quote before it - and
+    /// a mask matching typed words against cues wants `damn`, not `damn,`.
+    /// Off, the text is what the model wrote, as it always was.
+    strip: bool,
+}
+
+/// The name of this module's own parameter.
+const STRIP: &str = "strip";
+
+/// The schema this module publishes: the shared one with `strip` added.
+fn params_schema() -> String {
+    let mut schema: serde_json::Value = serde_json::from_str(PARAMS_SCHEMA).expect("valid json");
+    schema["properties"][STRIP] = serde_json::json!({"type": "boolean", "default": false});
+    schema.to_string()
+}
+
 /// Parses and validates params, shared by `init` and `set_params`. The list is
-/// `transcribe`'s, so a query can swap one export for the other.
-fn parse_params(params: &str) -> Result<Params, String> {
-    parse_shared(ME, params)
+/// `transcribe`'s plus `strip`, so a query can swap one export for the other
+/// and only lose the stripping.
+fn parse_params(params: &str) -> Result<WordParams, String> {
+    let trimmed = params.trim();
+    if trimmed.is_empty() {
+        return Ok(WordParams {
+            decode: parse_shared(ME, "")?,
+            strip: false,
+        });
+    }
+    let mut written: serde_json::Value =
+        serde_json::from_str(trimmed).map_err(|e| format!("{ME}: bad params: {e}"))?;
+    let strip = match written.as_object_mut().and_then(|o| o.remove(STRIP)) {
+        None | Some(serde_json::Value::Null) => false,
+        Some(serde_json::Value::Bool(strip)) => strip,
+        Some(other) => {
+            return Err(format!("{ME}: {STRIP} is true or false, not {other}"));
+        }
+    };
+    Ok(WordParams {
+        decode: parse_shared(ME, &written.to_string())?,
+        strip,
+    })
 }
 
 /// The spec's spelling of an error code, so a message says what actually went
@@ -208,7 +250,7 @@ struct Decoded {
 struct Opened {
     /// The unit this stream's timestamps are counted in.
     time_base: (i32, i32),
-    params: Params,
+    params: WordParams,
     plan: Plan,
     vocab: Vocab,
     /// What an upstream detector said about where the speech is.
@@ -353,8 +395,8 @@ impl Opened {
         let mel = self.plan.spectrogram(samples);
         let content_frames = mel::content_frames(samples.len());
 
-        let detect = tokens::prefix(None, self.params.task, false);
-        let language = match self.params.language {
+        let detect = tokens::prefix(None, self.params.decode.task, false);
+        let language = match self.params.decode.language {
             Some(named) if known_speech => Some(named),
             Some(named) => {
                 let heard = self.pass(&mel, &detect, DETECT_LENGTH, 1, false)?;
@@ -371,7 +413,7 @@ impl Opened {
 
         let said = self.pass(
             &mel,
-            &tokens::prefix(Some(language), self.params.task, true),
+            &tokens::prefix(Some(language), self.params.decode.task, true),
             TRANSCRIBE_LENGTH,
             BEAMS,
             true,
@@ -402,7 +444,7 @@ impl Guest for TranscribeWords {
             meta: Meta {
                 name: "transcribe_words".to_string(),
                 version: "0.1.0".to_string(),
-                params_schema: PARAMS_SCHEMA.to_string(),
+                params_schema: params_schema(),
                 rows_schema: ROWS_SCHEMA.to_string(),
                 // An audio module, so it names no pixel formats.
                 pixel_formats: vec![],
@@ -538,9 +580,10 @@ impl Guest for TranscribeWords {
                 .window(&samples, known)
                 .unwrap_or_else(|message| panic!("{message}"));
 
+            let strip = opened.params.strip;
             let rows: Vec<String> = clamped(said, start, &opened.speech)
                 .into_iter()
-                .map(|word| row(word, start))
+                .filter_map(|word| row(word, start, strip))
                 .collect();
             opened.speech.forget(end);
 
@@ -588,13 +631,28 @@ fn clamped(mut words: Vec<Word>, start: f64, speech: &Speech) -> Vec<Word> {
 
 /// One word as the NDJSON line it leaves as, its times moved onto the stream's
 /// own clock and held inside the window that produced it.
-fn row(word: Word, start: f64) -> String {
-    Cue {
-        text: word.text.trim().to_string(),
-        start_t: start + word.start.min(WINDOW_SECONDS),
-        end_t: start + word.end.min(WINDOW_SECONDS),
+///
+/// With `strip`, the text is the bare word: the punctuation the model attached
+/// to it comes off both ends, and a word that was only punctuation - a dash
+/// standing alone - leaves no row at all. Without it, the text is what the
+/// model wrote, trimmed of the space it opens on.
+fn row(word: Word, start: f64, strip: bool) -> Option<String> {
+    let text = if strip {
+        word.text.trim_matches(|c: char| !c.is_alphanumeric())
+    } else {
+        word.text.trim()
+    };
+    if text.is_empty() {
+        return None;
     }
-    .row()
+    Some(
+        Cue {
+            text: text.to_string(),
+            start_t: start + word.start.min(WINDOW_SECONDS),
+            end_t: start + word.end.min(WINDOW_SECONDS),
+        }
+        .row(),
+    )
 }
 
 export!(TranscribeWords);
@@ -610,8 +668,12 @@ mod tests {
     fn no_params_at_all_are_the_defaults() {
         for written in ["", "{}", "  "] {
             let parsed = parse_params(written).expect("the defaults");
-            assert_eq!(parsed.language, None, "the model detects one per window");
-            assert_eq!(parsed.task, Task::Transcribe);
+            assert_eq!(
+                parsed.decode.language, None,
+                "the model detects one per window"
+            );
+            assert_eq!(parsed.decode.task, Task::Transcribe);
+            assert!(!parsed.strip, "the text is what the model wrote");
         }
     }
 
@@ -619,8 +681,37 @@ mod tests {
     fn the_parameter_list_is_the_one_transcribe_takes() {
         let parsed = parse_params(r#"{"language":"es","task":"translate","language_out":"en"}"#)
             .expect("all three");
-        assert_eq!(parsed.language, tokens::language_token("es"));
-        assert_eq!(parsed.task, Task::Translate);
+        assert_eq!(parsed.decode.language, tokens::language_token("es"));
+        assert_eq!(parsed.decode.task, Task::Translate);
+    }
+
+    #[test]
+    fn strip_is_this_modules_own_and_is_true_or_false() {
+        assert!(parse_params(r#"{"strip":true}"#).expect("on").strip);
+        assert!(!parse_params(r#"{"strip":false}"#).expect("off").strip);
+        assert!(!parse_params(r#"{"strip":null}"#).expect("unset").strip);
+        assert!(parse_params(r#"{"strip":"yes"}"#).is_err());
+        assert!(
+            parse_params(r#"{"strop":true}"#).is_err(),
+            "unknown names still refuse"
+        );
+        let parsed = parse_params(r#"{"language":"es","strip":true}"#).expect("both");
+        assert_eq!(parsed.decode.language, tokens::language_token("es"));
+        assert!(parsed.strip);
+    }
+
+    #[test]
+    fn the_schema_is_the_shared_one_with_strip_added() {
+        let schema: serde_json::Value = serde_json::from_str(&params_schema()).expect("valid json");
+        let properties = schema["properties"].as_object().expect("an object");
+        let mut named: Vec<&String> = properties.keys().collect();
+        named.sort();
+        assert_eq!(named, ["language", "language_out", "strip", "task"]);
+        assert_eq!(
+            schema["properties"]["strip"]["type"],
+            serde_json::json!("boolean")
+        );
+        assert_eq!(schema["additionalProperties"], serde_json::json!(false));
     }
 
     #[test]
@@ -762,7 +853,7 @@ mod tests {
     #[test]
     fn a_word_becomes_a_cue_shaped_row_on_the_streams_own_clock() {
         assert_eq!(
-            row(word(" hola", 1.5, 2.25), 30.0),
+            row(word(" hola", 1.5, 2.25), 30.0, false).expect("a row"),
             r#"{"text":"hola","start_t":31.5,"end_t":32.25}"#,
             "the three columns a cue declares, trimmed, and nothing else"
         );
@@ -770,8 +861,42 @@ mod tests {
 
     #[test]
     fn a_word_never_runs_past_the_window_that_produced_it() {
-        let written = row(word(" hola", 29.5, 44.0), 0.0);
+        let written = row(word(" hola", 29.5, 44.0), 0.0, false).expect("a row");
         assert!(written.contains(r#""end_t":30.0"#), "{written}");
+    }
+
+    #[test]
+    fn stripping_leaves_the_bare_word_and_keeps_what_is_inside_it() {
+        let text = |written: &str| {
+            let cue: serde_json::Value =
+                serde_json::from_str(&row(word(written, 0.0, 1.0), 0.0, true).expect("a row"))
+                    .expect("json");
+            cue["text"].as_str().expect("text").to_string()
+        };
+        assert_eq!(text(" damn,"), "damn");
+        assert_eq!(text(" \"damn.\""), "damn");
+        assert_eq!(text(" -hello"), "hello");
+        assert_eq!(
+            text(" o'clock"),
+            "o'clock",
+            "punctuation inside a word stays"
+        );
+        assert_eq!(
+            text(" \u{201c}\u{ff2f}\u{3002}"),
+            "\u{ff2f}",
+            "any script, any width"
+        );
+        assert_eq!(
+            row(word(" damn,", 0.0, 1.0), 0.0, false).expect("a row"),
+            r#"{"text":"damn,","start_t":0.0,"end_t":1.0}"#,
+            "off, the text is what the model wrote"
+        );
+    }
+
+    #[test]
+    fn a_word_that_was_only_punctuation_leaves_no_row_when_stripped() {
+        assert!(row(word(" -", 0.0, 0.2), 0.0, true).is_none());
+        assert!(row(word(" -", 0.0, 0.2), 0.0, false).is_some());
     }
 
     // ---------------------------------------------- the alignment, end to end

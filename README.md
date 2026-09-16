@@ -61,6 +61,17 @@ to open on a window's first frame, so without spans a window's first
 word absorbs the silence ahead of it and can be reported seconds early.
 Given spans, its start is pulled onto the onset inside it.
 
+A cue's text is what the model wrote, punctuation included: a comma
+rides the word before it and an opening quote the word after, so a word
+comes through as `damn,` or `"damn`. With `strip` true, the last
+argument, it hands back the bare word instead, punctuation taken off both ends and a word that was only
+punctuation dropped, which is what a mask matching typed words wants:
+
+```pgsql
+SELECT ffrwd.whisper.transcribe_words(ffrwd.vad.speech(a), NULL, 'transcribe', NULL, true).words
+FROM input('film.mkv') f, unnest(f.audio) a WHERE a.index = 1
+```
+
 The two exports pin different files of the same model, so installing
 both downloads two gigabytes rather than one.
 
@@ -70,8 +81,9 @@ both downloads two gigabytes rather than one.
   DEFAULT NULL, task text DEFAULT 'transcribe', language_out text
   DEFAULT NULL)` returns `STRUCT(a audio_stream, words cue[])`: the
   audio as it came, and what was said, a cue per stretch of speech.
-- `transcribe_words(...)` takes the same arguments and returns the same
-  shape, a cue per word. CUDA only.
+- `transcribe_words(..., strip boolean DEFAULT false)` takes the same
+  arguments plus `strip` and returns the same shape, a cue per word.
+  CUDA only.
 
 ## Recipes
 
