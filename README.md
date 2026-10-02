@@ -1,23 +1,29 @@
 # ffrwd/whisper
 
 Speech into text pipeline. `transcribe` runs whisper over an audio
-stream, hands the audio back untouched, and leaves one cue per stretch
-of speech beside it with the words in it. Written beside the clip, the
-cues are a subtitle track; written alone, a transcript.
+stream and writes one cue per stretch of speech with the words in it.
+Written beside the clip, the cues are a subtitle track; written alone,
+a transcript.
+
+Requires ffrwd 0.29.
 
 ```pgsql
 COPY (
   SELECT f.video[1], a,
-         ffrwd.whisper.transcribe(ffrwd.vad.speech(a), 'es').words
+         ffrwd.whisper.transcribe(a, speech => ffrwd.vad.speech(a), language => 'es')
   FROM input('film.mkv') f, unnest(f.audio) a
   WHERE a.index = 1
 ) TO 'subbed.mkv'
 ```
 
-The audio is read thirty seconds at a time. `speech` is where a voice
-detector's spans arrive. `ffrwd/vad`'s `speech` already
-returns the original audio and the spans together, so its result is the whole
-first argument.
+The audio is read thirty seconds at a time, the model's own input, so a
+cue leaves when the window it was heard in has been decoded. The sound
+is not handed back: the query takes it from the source, as above.
+
+`speech` is where a voice detector's rows arrive, `ffrwd/vad`'s
+`speech` among them. Every row the detector writes for a window reaches
+that window, so a window with none is not decoded at all, and one with
+some needs no pass to establish that somebody is talking.
 
 `language` is what the dialogue is in; left unset, the model tries to detect
 it per window.
@@ -31,14 +37,14 @@ install. The model does not run on DirectML so picks CUDA or the CPU by itself.
 
 ## One cue per word
 
-`transcribe_words` takes the same arguments and returns the same shape,
-but each cue is a single word with the seconds it runs between. Use it
-when something downstream acts on the times, such as a mask that bleeps
-only the words it was given: a phrase cue can be thirty seconds long, so
-one word in it silences the half minute around it.
+`transcribe_words` takes the same arguments and returns the same
+rows, but each cue is a single word with the seconds it runs between.
+Use it when something downstream acts on the times, such as a mask that
+bleeps only the words it was given: a phrase cue can be thirty seconds
+long, so one word in it silences the half minute around it.
 
 ```pgsql
-SELECT ffrwd.whisper.transcribe_words(ffrwd.vad.speech(a)).words
+SELECT ffrwd.whisper.transcribe_words(a, speech => ffrwd.vad.speech(a))
 FROM input('film.mkv') f, unnest(f.audio) a WHERE a.index = 1
 ```
 
@@ -57,18 +63,20 @@ consequences:
   the other.
 
 `speech` matters more here than it does for `transcribe`. The warp has
-to open on a window's first frame, so without spans a window's first
-word absorbs the silence ahead of it and can be reported seconds early.
-Given spans, its start is pulled onto the onset inside it.
+to open on a window's first frame, so without a detector a window's
+first word absorbs the silence ahead of it and can be reported seconds
+early. Given the detector's rows, its start is pulled onto the onset
+inside it.
 
 A cue's text is what the model wrote, punctuation included: a comma
 rides the word before it and an opening quote the word after, so a word
-comes through as `damn,` or `"damn`. With `strip` true, the last
-argument, it hands back the bare word instead, punctuation taken off both ends and a word that was only
-punctuation dropped, which is what a mask matching typed words wants:
+comes through as `damn,` or `"damn`. With `strip => true` it hands back
+the bare word instead, punctuation taken off both ends and a word that
+was only punctuation dropped, which is what a mask matching typed words
+wants:
 
 ```pgsql
-SELECT ffrwd.whisper.transcribe_words(ffrwd.vad.speech(a), NULL, 'transcribe', NULL, true).words
+SELECT ffrwd.whisper.transcribe_words(a, speech => ffrwd.vad.speech(a), strip => true)
 FROM input('film.mkv') f, unnest(f.audio) a WHERE a.index = 1
 ```
 
@@ -77,13 +85,13 @@ both downloads two gigabytes rather than one.
 
 ## Exports
 
-- `transcribe(a audio_stream, speech cue[] DEFAULT NULL, language text
-  DEFAULT NULL, task text DEFAULT 'transcribe', language_out text
-  DEFAULT NULL)` returns `STRUCT(a audio_stream, words cue[])`: the
-  audio as it came, and what was said, a cue per stretch of speech.
+- `transcribe(a audio_stream, speech STRUCT(start_t number)[] DEFAULT
+  NULL, language text DEFAULT NULL, task text DEFAULT 'transcribe',
+  language_out text DEFAULT NULL)` returns `cue[]`: what was said, a
+  cue per stretch of speech.
 - `transcribe_words(..., strip boolean DEFAULT false)` takes the same
-  arguments plus `strip` and returns the same shape, a cue per word.
-  CUDA only.
+  arguments plus `strip` and returns `cue[]`, a cue per word. CUDA
+  only.
 
 ## Recipes
 
@@ -98,6 +106,5 @@ ffrwd run ffrwd/whisper:subtitles -v source=film.mkv -v dest=subbed.mkv -v langu
 ## Building
 
 ```
-ffrwd install -g ffrwd/wasm
 cargo build --target wasm32-wasip2 --release
 ```

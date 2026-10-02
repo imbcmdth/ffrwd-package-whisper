@@ -1,5 +1,5 @@
-//! What was said: the audio passes through untouched and every stretch of
-//! speech leaves as a cue with the words in it.
+//! What was said: every stretch of speech leaves as a cue with the words in
+//! it.
 //!
 //! The graph is whisper, exported so that the encoder, the decoder loop and
 //! the beam search all sit INSIDE it - one `compute` per pass, with no decoder
@@ -9,10 +9,10 @@
 //!
 //! # The window
 //!
-//! 30 s, stride the same, which is the model's fixed 3000-frame input. The
-//! windows are disjoint and tile the stream, so the samples pass through as
-//! the very ones that arrived, and a cue's times are the model's own offset by
-//! the second the window starts at.
+//! 30 s, stride the same, which is the model's fixed 3000-frame input; the
+//! ports are `core`'s, shared with `transcribe_words`. A cue's times are the
+//! model's own offset by the second the window starts at, and held inside the
+//! audio the window carried.
 //!
 //! # The two passes
 //!
@@ -29,41 +29,28 @@
 //!
 //! # The rows an upstream detector sends
 //!
-//! A window a voice detector already said holds speech needs no first pass
-//! when the caller named the language: the question the first pass answers has
-//! been answered. Rows arriving on a window are kept rather than read and
-//! dropped, because a detector closes a span AFTER the speech in it - so a
-//! span's row may arrive one window late, and it still counts for the window
-//! it covers. Nothing is ever skipped on a row's absence: a span still open
-//! upstream has emitted nothing yet, so silence is the model's own call and
-//! never the detector's.
+//! They arrive with the window they fall in, all of them. A window with none
+//! holds no speech and is not decoded; one with some needs no first pass when
+//! the caller named the language, since the question that pass answers has
+//! been answered.
 
-// `generate_all`: the world's interfaces come from two other packages -
-// ffrwd:av and wasi:nn - and without it bindgen expects them to have been
-// generated somewhere else.
+// `generate_all`: the world's interfaces are wasi:nn's, a package of its own,
+// and without it bindgen expects them to have been generated somewhere else.
 wit_bindgen::generate!({
-    path: ["wit", "wit-world"],
-    // Fully qualified: three packages are in scope, and each has worlds.
+    path: "wit-world",
     world: "ffrwd:whisper/transcribe",
     generate_all,
 });
 
-use std::cell::RefCell;
-
-use exports::ffrwd::av::window_filter::{
-    Format, FramePayload, Guest, InWindow, Meta, OutFrame, Processed, StreamInfo, WindowMeta,
-};
+use ffrwd_node::{Bound, Init, Node, Out, Rational, Result, Shape, Tick};
 use wasi::nn::graph::{load_by_name, Graph};
 use wasi::nn::inference::GraphExecutionContext;
 use wasi::nn::tensor::{Tensor, TensorType};
-use whisper_core::cue::{Cue, ROWS_SCHEMA};
-use whisper_core::mel::{
-    self, Plan, N_FRAMES, N_MELS, SAMPLE_RATE, WINDOW_SAMPLES, WINDOW_SECONDS,
-};
+use whisper_core::mel::{Plan, N_FRAMES, N_MELS, WINDOW_SECONDS};
+use whisper_core::node::{self, Window};
 use whisper_core::params::{parse_params as parse_shared, Params, PARAMS_SCHEMA};
 use whisper_core::tensor::{f32_bytes, i32_bytes, to_i32};
 use whisper_core::tokens::{self, Segment, Vocab};
-use whisper_core::{seconds, Speech};
 
 /// The name the host binds the graph to. `-nn transcribe=<path>`.
 const MODEL: &str = "transcribe";
@@ -96,9 +83,6 @@ const TRANSCRIBE_LENGTH: i32 = 224;
 /// token after the prefix, so this is the prefix, the answer, and room for the
 /// model to end.
 const DETECT_LENGTH: i32 = 4;
-
-/// Samples one call is handed.
-const WINDOW: u32 = WINDOW_SAMPLES as u32;
 
 /// Parses and validates params, shared by `init` and `set_params`. The list
 /// and the refusals are `transcribe_words`' too, so they live in `core`.
@@ -141,15 +125,13 @@ fn scalar_f32(name: &str, value: f32) -> (String, Tensor) {
     )
 }
 
-/// What `init` settled, plus the graph it loaded.
-struct Opened {
-    /// The unit this stream's timestamps are counted in.
-    time_base: (i32, i32),
+struct Transcribe {
+    a: u32,
+    speech: Option<u32>,
+    time_base: Rational,
     params: Params,
     plan: Plan,
     vocab: Vocab,
-    /// What an upstream detector said about where the speech is.
-    speech: Speech,
     /// Held for the life of the instance: building it once is what keeps a
     /// provider's kernels from being chosen again per window.
     context: GraphExecutionContext,
@@ -157,11 +139,7 @@ struct Opened {
     _graph: Graph,
 }
 
-thread_local! {
-    static OPENED: RefCell<Option<Opened>> = const { RefCell::new(None) };
-}
-
-impl Opened {
+impl Transcribe {
     /// One pass through the graph: the answer's token ids, with the forced
     /// prefix still on the front.
     fn pass(
@@ -258,65 +236,21 @@ impl Opened {
     }
 }
 
-struct Transcribe;
+impl Node for Transcribe {
+    const NAME: &'static str = "transcribe";
+    const VERSION: &'static str = "0.2.0";
+    const PARAMS_SCHEMA: &'static str = PARAMS_SCHEMA;
+    const ROWS_LANGUAGE: &'static [&'static str] = node::ROWS_LANGUAGE;
+    type Params = serde_json::Value;
 
-impl Guest for Transcribe {
-    fn describe() -> WindowMeta {
-        WindowMeta {
-            meta: Meta {
-                name: "transcribe".to_string(),
-                version: "0.1.0".to_string(),
-                params_schema: PARAMS_SCHEMA.to_string(),
-                rows_schema: ROWS_SCHEMA.to_string(),
-                // An audio module, so it names no pixel formats.
-                pixel_formats: vec![],
-                sample_formats: vec!["f32".to_string()],
-                // What the model was trained on, and the host conforms to it.
-                sample_rates: vec![SAMPLE_RATE],
-                channel_counts: vec![1],
-                // What the cues are in: the language they were turned into
-                // when one was asked for, else the one they were heard in.
-                rows_language: vec!["language_out".to_string(), "language".to_string()],
-            },
-            window: WINDOW,
-            stride: WINDOW,
-            // The spans an upstream detector sent carry from one call to the
-            // next, since a span's row may arrive after the window it covers.
-            pure: false,
-            // The samples pass through as they arrived.
-            one_to_one: true,
-            reads_rows: true,
-            // What leaves is this module's own cues and nothing else.
-            forwards_rows: false,
-            // One stream in: the audio it listens to.
-            inputs: 1,
-        }
+    fn shape(_: &serde_json::Value, _: &Bound) -> Result<Shape> {
+        Ok(node::shape())
     }
 
-    fn init(format: Format, stream_info: StreamInfo, params: String) -> Result<(), String> {
-        let Format::Audio(audio) = format else {
-            return Err("transcribe listens to samples, and this stream is video".to_string());
-        };
-        if audio.sample_fmt != "f32" {
-            return Err(format!(
-                "transcribe does not accept sample format {}",
-                audio.sample_fmt
-            ));
-        }
-        if audio.sample_rate != SAMPLE_RATE {
-            return Err(format!(
-                "transcribe listens at {SAMPLE_RATE} Hz, and this instance is {} Hz",
-                audio.sample_rate
-            ));
-        }
-        if audio.channels != 1 {
-            return Err(format!(
-                "transcribe listens in mono, and this instance has {} channels",
-                audio.channels
-            ));
-        }
-        let parsed = parse_params(&params)?;
+    fn init(params: serde_json::Value, init: &Init) -> Result<Transcribe> {
+        let parsed = parse_params(&params.to_string())?;
         let vocab = Vocab::whisper().map_err(|e| format!("transcribe: {e}"))?;
+        let a = init.stream("a")?;
 
         // The graph is loaded once per instance, and the session built once:
         // the first pass is what a provider picks its kernels on, and every
@@ -327,104 +261,43 @@ impl Guest for Transcribe {
             .init_execution_context()
             .map_err(|e| failed("init-execution-context", &e))?;
 
-        OPENED.with(|o| {
-            *o.borrow_mut() = Some(Opened {
-                time_base: (stream_info.time_base.num, stream_info.time_base.den),
-                params: parsed,
-                plan: Plan::new(),
-                vocab,
-                speech: Speech::new(),
-                context,
-                _graph: graph,
-            });
-        });
-        Ok(())
-    }
-
-    fn set_params(params: String) -> Result<(), String> {
-        let parsed = parse_params(&params)?;
-        OPENED.with(|o| {
-            if let Some(opened) = o.borrow_mut().as_mut() {
-                opened.params = parsed;
-            }
-        });
-        Ok(())
-    }
-
-    fn process(window: &InWindow, trailing: Vec<String>, _last: bool) -> Processed {
-        OPENED.with(|o| {
-            let mut borrowed = o.borrow_mut();
-            let opened = borrowed
-                .as_mut()
-                .expect("init loads the graph before any audio arrives");
-
-            // Whatever an upstream detector had nothing left to put its rows
-            // on still says where the speech was.
-            for row in &trailing {
-                opened.speech.push(row);
-            }
-
-            let mut out: Vec<OutFrame> = Vec::with_capacity(window.len() as usize);
-            let mut samples: Vec<f32> = Vec::new();
-            let mut start = 0f64;
-            for index in 0..window.len() {
-                for row in window.rows(index) {
-                    opened.speech.push(&row);
-                }
-                let pts = window.pts(index);
-                if index == 0 {
-                    start = seconds(pts, opened.time_base.0, opened.time_base.1);
-                }
-                let payload = window.fetch(index);
-                let (bytes, _) = payload.as_chunks::<4>();
-                samples.extend(bytes.iter().copied().map(f32::from_le_bytes));
-                out.push(OutFrame {
-                    pts,
-                    frame: FramePayload::Same,
-                    rows: Vec::new(),
-                });
-            }
-
-            let end = start + samples.len() as f64 / f64::from(SAMPLE_RATE);
-            let known = opened.speech.covers(start, end);
-            // `process` has no way to say no, so a graph that failed
-            // mid-stream stops the run rather than reporting silence.
-            let said = opened
-                .window(&samples, known)
-                .unwrap_or_else(|message| panic!("{message}"));
-            opened.speech.forget(end);
-
-            // The cues ride the window that produced them, at the seconds that
-            // window starts at.
-            let rows: Vec<String> = said
-                .into_iter()
-                .map(|segment| row(segment, start))
-                .collect();
-            let mut trailing = Vec::new();
-            match out.last_mut() {
-                Some(frame) => frame.rows = rows,
-                None => trailing = rows,
-            }
-            Processed {
-                frames: out,
-                trailing,
-            }
+        Ok(Transcribe {
+            a: a.id,
+            speech: init.optional("speech").map(|speech| speech.id),
+            time_base: a.info.time_base,
+            params: parsed,
+            plan: Plan::new(),
+            vocab,
+            context,
+            _graph: graph,
         })
     }
-}
 
-/// One segment as the NDJSON line it leaves as, its times moved onto the
-/// stream's own clock.
-fn row(segment: Segment, start: f64) -> String {
-    Cue {
-        text: segment.text,
-        start_t: start + segment.start,
-        end_t: start + segment.end.min(mel::WINDOW_SECONDS),
+    fn set_params(&mut self, params: serde_json::Value) -> Result<()> {
+        self.params = parse_params(&params.to_string())?;
+        Ok(())
     }
-    .row()
+
+    fn process(&mut self, tick: &Tick, out: &mut Out) -> Result<()> {
+        let Some(window) = Window::of(tick, self.a, self.speech, self.time_base)? else {
+            return Ok(());
+        };
+        if window.silent() {
+            return Ok(());
+        }
+        let said = self.window(&window.samples, window.known())?;
+        Ok(node::emit(out, cues(&window, said))?)
+    }
 }
 
-export!(Transcribe);
+/// The window's segments as cues on the stream's own clock.
+fn cues(window: &Window, said: Vec<Segment>) -> Vec<whisper_core::cue::Cue> {
+    said.into_iter()
+        .map(|segment| window.cue(segment.text, segment.start, segment.end))
+        .collect()
+}
+
+ffrwd_node::export!(Transcribe);
 
 #[cfg(test)]
 mod tests {
@@ -493,33 +366,65 @@ mod tests {
         assert!(parse_params(r#"{"beams":3}"#).is_err());
     }
 
+    fn window(start: f64, seconds: f64) -> Window {
+        let samples = vec![0.0; (seconds * 16_000.0) as usize];
+        Window {
+            start,
+            length: seconds,
+            samples,
+            bound: false,
+            speech: whisper_core::Speech::new(),
+        }
+    }
+
+    fn segment(start: f64, end: f64, text: &str) -> Segment {
+        Segment {
+            start,
+            end,
+            text: text.to_string(),
+        }
+    }
+
     #[test]
-    fn a_segment_becomes_a_cue_shaped_row_on_the_streams_own_clock() {
-        let written = row(
-            Segment {
-                start: 1.5,
-                end: 2.25,
-                text: "hola".to_string(),
-            },
-            30.0,
-        );
+    fn a_segment_becomes_a_cue_on_the_streams_own_clock() {
+        let cue = &cues(&window(30.0, 30.0), vec![segment(1.5, 2.25, "hola")])[0];
         assert_eq!(
-            written, r#"{"text":"hola","start_t":31.5,"end_t":32.25}"#,
+            serde_json::to_string(cue).expect("json"),
+            r#"{"text":"hola","start_t":31.5,"end_t":32.25}"#,
             "the three columns a cue declares, and nothing else"
         );
     }
 
     #[test]
     fn a_cue_never_runs_past_the_window_that_produced_it() {
-        let written = row(
-            Segment {
-                start: 29.0,
-                end: 44.0,
-                text: "hola".to_string(),
-            },
-            0.0,
+        let cue = &cues(&window(0.0, 30.0), vec![segment(29.0, 44.0, "hola")])[0];
+        assert_eq!(cue.end_t, 30.0);
+    }
+
+    #[test]
+    fn the_last_cue_of_a_stream_ends_with_its_audio() {
+        // 75 s of audio: the last window carries 15 s, padded to 30 for the
+        // model, and the segment the model ran on to its padding stops at 75.
+        let cue = &cues(&window(60.0, 15.0), vec![segment(8.4, 30.0, "goodbye")])[0];
+        assert_eq!((cue.start_t, cue.end_t), (68.4, 75.0));
+    }
+
+    #[test]
+    fn the_ports_are_the_audio_the_detectors_rows_and_the_cues() {
+        let bound = |ports: &[&str]| {
+            let ports: Vec<String> = ports.iter().map(|p| p.to_string()).collect();
+            ffrwd_node::Runner::<Transcribe>::shape("", &ports).expect("a shape")
+        };
+        let alone = bound(&["a"]);
+        assert_eq!(alone.clock_input(), Some("a"));
+        assert_eq!(alone.outputs[0].name, "words");
+        assert!(alone.pure);
+        let beside = bound(&["a", "speech"]);
+        assert_eq!(beside.inputs.len(), 2);
+        assert!(
+            ffrwd_node::Runner::<Transcribe>::shape(r#"{"words":true}"#, &[]).is_err(),
+            "a param this module does not have"
         );
-        assert!(written.contains(r#""end_t":30.0"#), "{written}");
     }
 
     #[test]

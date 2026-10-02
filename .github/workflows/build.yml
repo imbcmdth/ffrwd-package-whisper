@@ -16,16 +16,16 @@ jobs:
           targets: wasm32-wasip2
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Install ffrwd and the wit package
-        run: |
-          pip install ffrwd ffrwd-wasm
-          ffrwd install -g "ffrwd/wasm@$(python -c 'import json; print(json.load(open("ffrwd.json"))["dependencies"]["ffrwd/wasm"])')"
-      - name: Build the module
+      - name: Build the modules
         run: cargo build --target wasm32-wasip2 --release
+      - name: Install the sidecar
+        run: pip install ffrwd-wasm
       - name: Describe the modules
         run: |
-          ffrwd-wasm --describe target/wasm32-wasip2/release/transcribe.wasm
-          ffrwd-wasm --describe target/wasm32-wasip2/release/transcribe_words.wasm
+          for module in transcribe transcribe_words; do
+            ffrwd-wasm --describe "target/wasm32-wasip2/release/$module.wasm"
+            ffrwd-wasm --shape "target/wasm32-wasip2/release/$module.wasm" --bound a,speech
+          done
       - name: Unit tests
         run: cargo test --release
       - name: Formatting

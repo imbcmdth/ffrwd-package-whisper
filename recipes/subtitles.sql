@@ -3,10 +3,11 @@
 -- example: ffrwd compile -f packages/ffrwd/whisper/recipes/subtitles.sql -v source=film.mkv -v dest=subbed.mkv -v language=es
 COPY (
   SELECT f.video[1], a,
-         ffrwd.whisper.transcribe(ffrwd.vad.speech(a),
-                                  :'language',
-                                  COALESCE(:'task', 'transcribe'),
-                                  :'language_out').words
+         ffrwd.whisper.transcribe(a,
+                                  speech => ffrwd.vad.speech(a),
+                                  language => :'language',
+                                  task => COALESCE(:'task', 'transcribe'),
+                                  language_out => :'language_out')
   FROM input(:'source') f, unnest(f.audio) a
   WHERE a.index = COALESCE(:track, 1)
 ) TO :'dest'

@@ -3,9 +3,6 @@
 # the directory stays out of the archive.
 target/
 
-# The wit the build.rs copies in, which is the sidecar's own.
-wit/
-
 # The model, which the manifest pins and `ffrwd install` fetches. It is never
 # package content.
 *.onnx
