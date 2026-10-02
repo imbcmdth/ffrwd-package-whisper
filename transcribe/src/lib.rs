@@ -29,10 +29,11 @@
 //!
 //! # The rows an upstream detector sends
 //!
-//! They arrive with the window they fall in, all of them. A window with none
-//! holds no speech and is not decoded; one with some needs no first pass when
-//! the caller named the language, since the question that pass answers has
-//! been answered.
+//! They arrive with the window they fall in, all of them. A window with some
+//! needs no first pass when the caller named the language, since the question
+//! that pass answers has been answered. A window with none is decoded all the
+//! same: a detector can miss speech the model hears, and the first pass is
+//! what has the last word on whether anything was said.
 
 // `generate_all`: the world's interfaces are wasi:nn's, a package of its own,
 // and without it bindgen expects them to have been generated somewhere else.
@@ -282,9 +283,6 @@ impl Node for Transcribe {
         let Some(window) = Window::of(tick, self.a, self.speech, self.time_base)? else {
             return Ok(());
         };
-        if window.silent() {
-            return Ok(());
-        }
         let said = self.window(&window.samples, window.known())?;
         Ok(node::emit(out, cues(&window, said))?)
     }
@@ -372,7 +370,6 @@ mod tests {
             start,
             length: seconds,
             samples,
-            bound: false,
             speech: whisper_core::Speech::new(),
         }
     }

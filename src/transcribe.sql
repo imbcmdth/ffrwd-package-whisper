@@ -9,11 +9,11 @@
 --
 -- `speech` is where an upstream voice detector's rows arrive, given by name:
 -- `speech => ffrwd.vad.speech(a)`. It is optional. With it, every row the
--- detector wrote for a window reaches that window, so a window with none is
--- not decoded at all, and one the detector vouched for skips the pass that
--- would otherwise have to establish there is speech in it. Without it, that
--- pass runs on every window, and it is also what keeps the model from putting
--- words to a music bed.
+-- detector wrote for a window reaches that window, and a window the detector
+-- vouched for skips the pass that would otherwise have to establish there is
+-- speech in it when the language is named. Every other window takes that
+-- pass, and it is also what keeps the model from putting words to a music
+-- bed.
 --
 -- `language` is what the dialogue is in. Left unset the model detects it per
 -- window, which is what to do when the clip changes language or when nobody

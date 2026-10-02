@@ -31,13 +31,13 @@
 --
 -- `speech` is where an upstream voice detector's rows arrive, given by name:
 -- `speech => ffrwd.vad.speech(a)`. It is optional, and it does more here than
--- it does for `transcribe`: besides sparing a window with no speech the decode
--- and a window with some the pass that establishes it, the onsets it carries
--- are what keep a window's FIRST word honest. The warp has to open its path on
--- the first frame, so that word otherwise swallows any silence ahead of it and
--- can be reported seconds early; with an onset, its start is pulled forward
--- onto the onset inside it. Without one it keeps the raw start, which is the
--- one place this export is worth distrusting.
+-- it does for `transcribe`. It spares a window the detector heard speech in
+-- the pass that would otherwise establish it, and its onsets are what keep a
+-- window's FIRST word honest. The warp has to open its path on the first
+-- frame, so that word otherwise swallows any silence ahead of it and can be
+-- reported seconds early; with an onset, its start is pulled forward onto the
+-- onset inside it. Without one it keeps the raw start, which is the one place
+-- this export is worth distrusting.
 --
 -- `language` is what the dialogue is in. Left unset the model detects it per
 -- window, which is what to do when the clip changes language or when nobody

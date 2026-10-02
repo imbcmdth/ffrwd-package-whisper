@@ -22,8 +22,9 @@ is not handed back: the query takes it from the source, as above.
 
 `speech` is where a voice detector's rows arrive, `ffrwd/vad`'s
 `speech` among them. Every row the detector writes for a window reaches
-that window, so a window with none is not decoded at all, and one with
-some needs no pass to establish that somebody is talking.
+that window, and with a language named, a window it vouched for needs no
+pass to establish that somebody is talking. A window it heard nothing in
+is decoded all the same, since a detector can miss what whisper hears.
 
 `language` is what the dialogue is in; left unset, the model tries to detect
 it per window.

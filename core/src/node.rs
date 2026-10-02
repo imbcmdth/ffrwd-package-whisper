@@ -3,8 +3,9 @@
 //!
 //! `a` is the clock, 30 s of 16 kHz mono a tick, which is the model's fixed
 //! input. `speech` is an upstream detector's rows, optional, paired by time:
-//! every row stamped inside the window reaches it with the window, so a
-//! window with none in it holds no speech and is not decoded at all. `words`
+//! every row stamped inside the window reaches it with the window. A window
+//! with none is still decoded: a detector misses speech a transcriber hears,
+//! so the model's own pass is what decides there was nothing to say. `words`
 //! is a cue a segment or a word, stamped at its start. The window is the
 //! delay, which the host reads off the shape, so the output declares none.
 //!
@@ -64,8 +65,7 @@ pub struct Window {
     /// Seconds of audio in it: 30, or less on the last window of a stream.
     pub length: f64,
     pub samples: Vec<f32>,
-    /// Whether a detector is bound, and so whether `speech` is its word.
-    pub bound: bool,
+    /// What a detector said about the window; nothing when none is bound.
     pub speech: Speech,
 }
 
@@ -92,14 +92,8 @@ impl Window {
             start: time_base.seconds(frame.pts),
             length: samples.len() as f64 / f64::from(SAMPLE_RATE),
             samples,
-            bound: speech.is_some(),
             speech: heard,
         }))
-    }
-
-    /// A detector is bound and heard nothing here: there is nothing to decode.
-    pub fn silent(&self) -> bool {
-        self.bound && !self.speech.any()
     }
 
     /// A detector said this window holds speech, which stands in for the pass
@@ -140,7 +134,6 @@ mod tests {
             start,
             length: samples as f64 / f64::from(SAMPLE_RATE),
             samples: vec![0.0; samples],
-            bound: false,
             speech: Speech::new(),
         }
     }
@@ -167,13 +160,11 @@ mod tests {
     }
 
     #[test]
-    fn a_window_is_silent_only_when_a_detector_is_bound_and_heard_nothing() {
-        let mut unbound = window(0.0, 10);
-        assert!(!unbound.silent() && !unbound.known());
-        unbound.bound = true;
-        assert!(unbound.silent());
-        unbound.speech.heard(3.0);
-        assert!(!unbound.silent() && unbound.known());
+    fn a_window_is_known_to_hold_speech_only_once_a_detector_says_so() {
+        let mut window = window(0.0, 10);
+        assert!(!window.known());
+        window.speech.heard(3.0);
+        assert!(window.known());
     }
 
     #[test]

@@ -470,9 +470,6 @@ impl Node for TranscribeWords {
         let Some(window) = Window::of(tick, self.a, self.speech, self.time_base)? else {
             return Ok(());
         };
-        if window.silent() {
-            return Ok(());
-        }
         let said = self.window(&window.samples, window.known())?;
         let words = clamped(said, window.start, &window.speech);
         Ok(node::emit(out, cues(&window, words, self.params.strip))?)
@@ -735,7 +732,6 @@ mod tests {
             start,
             length,
             samples: Vec::new(),
-            bound: false,
             speech: Speech::new(),
         };
         cues(&window, vec![word], strip).into_iter().next()
