@@ -1,6 +1,6 @@
 {
   "name": "ffrwd/whisper",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Whisper transcribes or translates an audio stream into cues with the detected words in it.",
   "license": "Apache-2.0",
   "homepage": "https://github.com/imbcmdth/ffrwd-package-whisper",
@@ -8,8 +8,8 @@
     "nn"
   ],
   "dependencies": {
-    "ffrwd/wasm": "0.19.0",
-    "ffrwd/vad": "0.2.0"
+    "ffrwd/wasm": "0.19.1",
+    "ffrwd/vad": "0.2.1"
   },
   "keywords": [
     "whisper",

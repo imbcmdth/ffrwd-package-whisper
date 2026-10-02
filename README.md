@@ -5,7 +5,7 @@ stream and writes one cue per stretch of speech with the words in it.
 Written beside the clip, the cues are a subtitle track; written alone,
 a transcript.
 
-Requires ffrwd 0.29.
+Requires ffrwd 0.29, whose `ffrwd/wasm` is 0.19.1.
 
 ```pgsql
 COPY (

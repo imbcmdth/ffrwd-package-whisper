@@ -9,6 +9,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 whisper-core = { path = "../core" }
-ffrwd-node = { git = "https://github.com/imbcmdth/ffrwd-node", tag = "v0.1.0" }
+ffrwd-node = { git = "https://github.com/imbcmdth/ffrwd-node", tag = "v0.2.0" }
 wit-bindgen = "0.57.1"
 serde_json = "1"
